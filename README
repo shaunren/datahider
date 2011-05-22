@@ -24,3 +24,8 @@ at least # of pixels / 3 - 282 bytes of data and at most # of pixels / 3 - 28.
 
     e.g. a photo shot by a 3.1 MP camera (2048 * 1536) can store about
          (2048 * 1536) / 3 - 282 = 1048294 bytes of data, or around 1MB.
+
+4. Troubleshooting
+This script only works on Python 2.6+ and DOES NOT work on Python 3+.
+If you are using an UNIX-like operating system, try changing 'python2' in the
+first line to 'python'.
