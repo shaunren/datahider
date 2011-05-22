@@ -1,0 +1,26 @@
+datahider.py
+By Shaun Ren
+
+1. Introduction
+datahider.py is a script used to encode/decode data into/from an image by 
+manipulating the LSB of every band(R,G,B) of the pixels in the image. This
+yields an image that has no noticable difference compared to the original (
+both size and visual) yet effectively storing data into the image.
+
+2. Usage
+Encoding data: ./datahider.py <original image> <output image> <data>
+Decoding data: ./datahider.py -d <image with data>
+
+3. Limitations
+datahider.py can only store a single file. However, this can be solved by
+archiving all the files into a single tarball and possibly compressing it.
+This script also does not provide any encryption algorithms, therefore
+encrypting the file before encoding is recommended. 
+
+The method used by this script, storing one bit of information on every band,
+yields 1 byte of data per three pixels. The script also adds a header of length
+28~282 bytes depending on the length of the file name. Therefore, you can store
+at least # of pixels / 3 - 282 bytes of data and at most # of pixels / 3 - 28.
+
+    e.g. a photo shot by a 3.1 MP camera (2048 * 1536) can store about
+         (2048 * 1536) / 3 - 282 = 1048294 bytes of data, or around 1MB.
