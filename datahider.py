@@ -33,7 +33,7 @@ isvalidfile = lambda s: (os.path.exists(s) and os.path.isfile(s))
 # decodes a byte (return an integer)
 def decode_byte(pixels, index):
     assert index >= 0, 'Index underflow'
-    assert (index+1) * 3 < len(pixels), 'Index overflow'
+    assert (index+1) * 3 <= len(pixels), 'Index overflow'
     
     p = pixels[index*3:index*3 + 3]
     curbyte = 0
