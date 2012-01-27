@@ -2,7 +2,7 @@
 
 ############################################################################
 #    Encodes / Decodes data into/from image (bmp & png & gif only)
-#    Copyright (C) 2011 Shaun Ren
+#    Copyright (C) 2011,2012 Shaun Ren
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -24,10 +24,10 @@ import Image
 import hashlib
 
 # Script parameters
-VER_MAJOR, VER_MINOR = 0, 1
+VER_MAJOR, VER_MINOR = 0, 2
 MAGIC = (b'\xa0', b'\xb1', b'\xc2', b'\xd3')
 
-isvalidfile = lambda s: (os.path.exists(s) and os.path.isfile(s))
+isvalidfile = lambda s: os.path.exists(s) and os.path.isfile(s)
 
 # the 9th bit is an even parity bit i.e. B1 ^ ... ^ B8 ^ PB = 0 if correct
 # decodes a byte (return an integer)
@@ -43,7 +43,7 @@ def decode_byte(pixels, index):
             if i == 2 and j == 2:
                 if (paritybit ^ (p[2][2] & 1)) != 0:
                     print 'Corrupted data - Parity bit check failed.'
-                    exit(-1)
+                    exit(1)
                 break
 
             bitset = p[i][j] & 1
@@ -56,10 +56,7 @@ def decode_bytes(pixels, start, end):
     assert start >= 0, 'Index underflow'
     assert end * 3 <= len(pixels), 'Index overflow'
 
-    data = b''
-    
-    for i in range(start, end):
-        data += chr(decode_byte(pixels, i))
+    data = b''.join([chr(decode_byte(pixels, i)) for i in range(start,end)])
 
     return data
 
@@ -71,12 +68,12 @@ def decode_file(img):
         #print decode_byte(pixels, i)
         if decode_byte(pixels, i) != ord(MAGIC[i]):
             print 'Corrupted header - Invalid MAGIC.'
-            exit(-1)
+            exit(1)
 
     vermaj,vermin = decode_byte(pixels, 4), decode_byte(pixels, 5)
     if vermaj > VER_MAJOR:
         print 'Version not supported.'
-        exit(-1)
+        exit(1)
     elif vermaj == VER_MAJOR and vermin > VER_MINOR:
         cont = raw_input('The file is encoded using a newer version of this script. Continue decoding? [y/N]').strip().lower()
         if cont != 'y':
@@ -87,28 +84,35 @@ def decode_file(img):
     for i in range(4):
         size |= decode_byte(pixels, i+6) << (i*8)
 
-    md5sum = decode_bytes(pixels, 10,26)
-    fn_len = decode_byte(pixels, 26)
+    fn_start, usemd5 = 75, False
+    if vermaj < 1 and vermin < 2: # uses md5
+        usemd5 = True
+        checksum = decode_bytes(pixels, 10, 26)
+        fn_len, fn_start = decode_byte(pixels, 26), 27
+    else:
+        checksum = decode_bytes(pixels, 10, 74)
+        fn_len = decode_byte(pixels, 74)
 
     if fn_len < 1:
         print 'Invalid filename length.'
-        exit(-1)
+        exit(1)
 
-    filename = decode_bytes(pixels,27,27+fn_len)
-    if (size*3 + fn_len + 27) > len(pixels):
-        print 'Corrupted data - length too short.'
-        exit(-1)
+    filename = decode_bytes(pixels,fn_start,fn_start+fn_len)
+    if (size*3 + fn_len + fn_start) > len(pixels):
+        print 'Corrupted data - file too small.'
+        exit(1)
 
-    raw = decode_bytes(pixels, 27+fn_len, 27+fn_len+size)
+    raw = decode_bytes(pixels, fn_start+fn_len, fn_start+fn_len+size)
 
-    m = hashlib.md5()
+    m = hashlib.md5() if usemd5 else hashlib.sha512()
     m.update(raw)
-    if m.digest() != md5sum:
-        print 'Corrupted data - Invalid md5sum.'
-        exit(-1)
+    if m.digest() != checksum:
+        print 'Corrupted data - Invalid checksum.'
+        exit(1)
 
-    print filename + '\t\t\tSize: ' + locale.format('%d', size, grouping=True) + ' bytes'
-    print 'md5sum:', m.hexdigest()
+    print 'Filename:', filename
+    print 'Size:', locale.format('%d', size, grouping=True), 'bytes'
+    print 'md5sum:' if usemd5 else 'sha512sum:', m.hexdigest()
     with open(filename, 'wb') as f:
         f.write(raw)
 
@@ -118,7 +122,8 @@ def decode_file(img):
 # magic (4 bytes)
 # version (2 bytes) (major minor)
 # size (4 bytes)
-# md5 (16 bytes)
+## md5 (16 bytes) (0.1)
+# sha512 (64 bytes) (0.2+)
 # fn_len (1 byte)
 # filename (1~255 depending on fn_len)
 def encode_file(img, filename):
@@ -134,9 +139,9 @@ def encode_file(img, filename):
     size = os.path.getsize(filename)
     fn = os.path.basename(filename)
     
-    if (size*3 + len(fn) + 27) > (img.size[0] * img.size[1]):
+    if (size*3 + len(fn) + 75) > (img.size[0] * img.size[1]):
         print 'Image is too small for the data.'
-        exit(-1)
+        exit(1)
     elif size <= 0:
         print 'Nothing to be encoded.'
         exit(1)
@@ -145,19 +150,12 @@ def encode_file(img, filename):
     with open(filename, 'rb') as f:
         raw = f.read()
     
-
-    m = hashlib.md5()
+    m = hashlib.sha512()
     m.update(raw)
-    md5sum = m.digest()
+    checksum = m.digest()
 
-    for i in range(4):
-        data += chr((size >> (i*8)) & 0xFF)
-
-    data += md5sum
-    data += chr(len(fn))
-    data += fn
-
-    data += raw
+    data += ''.join([chr((size >> (i*8)) & 0xFF) for i in range(4)])
+    data += ''.join([checksum, chr(len(fn)), fn, raw])
 
     pixels = img.load()
     x, y = 0,0
@@ -186,8 +184,7 @@ def encode_file(img, filename):
             pixels[x,y] = tuple(p)
             x += 1
             if x >= img.size[0]:
-                y += 1
-                x = 0
+                x,y = 0, y+1
     
     return img
 
@@ -198,12 +195,12 @@ def main():
     if len(sys.argv) < 3 or len(sys.argv) > 4:
         print sys.argv[0] + ' ' + str(VER_MAJOR) + '.' + str(VER_MINOR) + \
             ' Encodes/decodes data into/from image.'
-        print 'Copyright (C) 2011 Shaun Ren'
+        print 'Copyright (C) 2011,2012 Shaun Ren'
         print 'This program comes with ABSOLUTELY NO WARRANTY.'
         print 'This is free software, and you are welcome to redistribute it'
         print 'under certain conditions.'
         print
-        print 'Usage: ' + sys.argv[0] + ' [imagein imageout inputfile | -d imagein] '
+        print 'Usage: ' + sys.argv[0] + ' [imagein imageout inputfile | -d imagein]'
         exit(1)
 
     # We store 1 bit of data on every band of every pixel, and the B band of
@@ -228,9 +225,9 @@ def main():
         imageout = sys.argv[2]
         infile = sys.argv[3]
 
-
+    VALID_EXTS = {'.bmp', '.png', '.gif'}
     ext = os.path.splitext(imagein)[1].lower()
-    if ext != '.bmp' and ext != '.png' and ext != '.gif':
+    if ext not in VALID_EXTS:
         print 'Invaild picture file. A lossless image format is required.'
         exit(1)
     elif not isvalidfile(imagein):
@@ -239,22 +236,22 @@ def main():
 
     if len(imageout) > 0:
         ext = os.path.splitext(imageout)[1].lower()
-        if ext != '.bmp' and ext != '.png' and ext != '.gif':
+        if ext not in VALID_EXTS:
             print 'Invalid output file. A lossless image format is required.'
             exit(1)
 
     if decode:
         im = Image.open(imagein)
-        if im.size[0] < 100 or im.size[1] < 100:
+        if im.size[0] * im.size[1] < 228:
             print 'Image size too small.'
-            exit(-1)
+            exit(1)
     
         decode_file(im)
     else: # encode
         im = Image.open(imagein)
-        if im.size[0] < 100 or im.size[1] < 100:
+        if im.size[0] * im.size[1] < 228:
             print 'Image size too small.'
-            exit(-1)
+            exit(1)
 
         imout = encode_file(im, infile)
     
