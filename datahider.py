@@ -75,7 +75,7 @@ def decode_bytes(pixels, start, end):
 
     return data
 
-def decode_file(img, outfile='', info=False):
+def decode_file(img, outfile='', info=False, verbose=False):
     data = b''
     pixels = list(img.getdata())
 
@@ -118,10 +118,12 @@ def decode_file(img, outfile='', info=False):
     if info:
         print 'This image contains encoded data.'
         print
-        print 'Version:', '{}.{}'.format(vermaj,vermin)
+        if verbose:
+            print 'Version:', '{}.{}'.format(vermaj,vermin)
     print 'Filename:', filename
-    print 'Size:', locale.format('%d', size, grouping=True), 'bytes'
-    print 'md5sum:' if usemd5 else 'sha512sum:', m.hexdigest()
+    if verbose:
+        print 'Size:', locale.format('%d', size, grouping=True), 'bytes'
+        print 'md5sum:' if usemd5 else 'sha512sum:', m.hexdigest()
 
     if not info:
         with open(filename if outfile == '' else outfile, 'wb') as f:
@@ -137,7 +139,7 @@ def decode_file(img, outfile='', info=False):
 # sha512 (64 bytes) (0.2+)
 # fn_len (1 byte)
 # filename (1~255 depending on fn_len)
-def encode_file(img, filename):
+def encode_file(img, filename, verbose=False):
     data = ''.join(MAGIC)
 
     data += chr(VER_MAJOR)
@@ -164,6 +166,11 @@ def encode_file(img, filename):
     m = hashlib.sha512()
     m.update(raw)
     checksum = m.digest()
+
+    if verbose:
+        print 'Filename:', fn
+        print 'Size:', locale.format('%d', size, grouping=True), 'bytes'
+        print 'sha512sum:', m.hexdigest()
 
     data += ''.join([chr((size >> (i*8)) & 0xFF) for i in range(4)])
     data += ''.join([checksum, chr(len(fn)), fn, raw])
@@ -246,7 +253,7 @@ def main():
             print 'Capacity: {} - {} bytes'.format(cmin, cmax)
             print
         try:
-            decode_file(im, args.outfile, args.info)
+            decode_file(im, args.outfile, args.info, args.verbose)
         except VersionError as e:
             if args.info:
                 print 'The data in the image is encoded using a newer version of this program.'
@@ -260,7 +267,7 @@ def main():
                 print 'error: ' + str(e)
                 exit(1)
     else: # encode
-        imout = encode_file(im, args.infile)
+        imout = encode_file(im, args.infile, args.verbose)
  
         if args.outfile == '':
             args.outfile = fn[0] + '.out' + fn[1]
