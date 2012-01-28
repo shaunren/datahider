@@ -30,6 +30,21 @@ MAGIC = (b'\xa0', b'\xb1', b'\xc2', b'\xd3')
 
 isvalidfile = lambda s: os.path.exists(s) and os.path.isfile(s)
 
+class CorruptedError(Exception):
+    def __init__(self, message):
+        self.message = message
+    def __str__(self):
+        return self.message
+
+class ParityBitError(CorruptedError):
+    def __init__(self):
+        super(ParityBitError, self).__init__('Parity check failed')
+
+class VersionError(CorruptedError):
+    def __init__(self):
+        super(VersionError, self).__init__('The version used is newer than the current version')
+
+
 # the 9th bit is an even parity bit i.e. B1 ^ ... ^ B8 ^ PB = 0 if correct
 # decodes a byte (return an integer)
 def decode_byte(pixels, index):
@@ -43,8 +58,7 @@ def decode_byte(pixels, index):
         for j in range(3):
             if i == 2 and j == 2:
                 if (paritybit ^ (p[2][2] & 1)) != 0:
-                    print 'Corrupted data - Parity bit check failed.'
-                    exit(1)
+                    raise ParityBitError
                 break
 
             bitset = p[i][j] & 1
@@ -61,25 +75,18 @@ def decode_bytes(pixels, start, end):
 
     return data
 
-def decode_file(img, outfile=''):
+def decode_file(img, outfile='', info=False):
     data = b''
     pixels = list(img.getdata())
 
     for i in range(len(MAGIC)):
         #print decode_byte(pixels, i)
         if decode_byte(pixels, i) != ord(MAGIC[i]):
-            print 'Corrupted header - Invalid MAGIC.'
-            exit(1)
+            raise CorruptedError('Corrupted header - Invalid MAGIC.')
 
     vermaj,vermin = decode_byte(pixels, 4), decode_byte(pixels, 5)
-    if vermaj > VER_MAJOR:
-        print 'Version not supported.'
-        exit(1)
-    elif vermaj == VER_MAJOR and vermin > VER_MINOR:
-        cont = raw_input('The file is encoded using a newer version of this script. Continue decoding? [y/N]').strip().lower()
-        if cont != 'y':
-            print 'Decoding canceled.'
-            return
+    if vermaj > VER_MAJOR or (vermaj == VER_MAJOR and vermin > VER_MINOR):
+        raise VersionError
     
     size = 0
     for i in range(4):
@@ -95,29 +102,32 @@ def decode_file(img, outfile=''):
         fn_len = decode_byte(pixels, 74)
 
     if fn_len < 1:
-        print 'Invalid filename length.'
-        exit(1)
+        raise CorruptedError('Invalid filename length.')
 
     filename = decode_bytes(pixels,fn_start,fn_start+fn_len)
     if (size*3 + fn_len + fn_start) > len(pixels):
-        print 'Corrupted data - file too small.'
-        exit(1)
+        raise CorruptedError('Image file too small.')
 
     raw = decode_bytes(pixels, fn_start+fn_len, fn_start+fn_len+size)
 
     m = hashlib.md5() if usemd5 else hashlib.sha512()
     m.update(raw)
     if m.digest() != checksum:
-        print 'Corrupted data - Invalid checksum.'
-        exit(1)
+        raise CorruptedError('Invalid checksum.')
 
+    if info:
+        print 'This image contains encoded data.'
+        print
+        print 'Version:', '{}.{}'.format(vermaj,vermin)
     print 'Filename:', filename
     print 'Size:', locale.format('%d', size, grouping=True), 'bytes'
     print 'md5sum:' if usemd5 else 'sha512sum:', m.hexdigest()
-    with open(filename if outfile == '' else outfile, 'wb') as f:
-        f.write(raw)
 
-    print 'Decoding successful.'
+    if not info:
+        with open(filename if outfile == '' else outfile, 'wb') as f:
+            f.write(raw)
+
+        print 'Decoding successful.'
 
 # header format (LSB for all numbers)
 # magic (4 bytes)
@@ -222,18 +232,34 @@ def main():
         extout = os.path.splitext(args.outfile)[1].lower()
         if extout not in VALID_EXTS:
             parser.error('Invalid output file. A lossless image format is required.')
-            
-    if args.decode:
-        im = Image.open(args.imagein)
-        if im.size[0] * im.size[1] < 228:
-            parser.error('Image size too small.')
-    
-        decode_file(im, args.outfile)
-    else: # encode
-        im = Image.open(args.imagein)
-        if im.size[0] * im.size[1] < 228:
-            parser.error('Image size too small.')
+   
+    im = Image.open(args.imagein)
+    if im.size[0] * im.size[1] < 228:
+        parser.error('Image size too small.')
 
+    if args.decode or args.info:
+        if args.info:
+            npixels = im.size[0] * im.size[1]
+            cmin, cmax = map(lambda n: locale.format('%d',n,grouping=True), 
+                             [npixels//3 - 330, npixels//3 - 76])
+            print 'Image dimensions:', '{}*{}'.format(im.size[0],im.size[1])
+            print 'Capacity: {} - {} bytes'.format(cmin, cmax)
+            print
+        try:
+            decode_file(im, args.outfile, args.info)
+        except VersionError as e:
+            if args.info:
+                print 'The data in the image is encoded using a newer version of this program.'
+            else:
+                print 'error: ' + str(e)
+                exit(1)
+        except CorruptedError as e:
+            if args.info:
+                print 'This image does not contain data or is corrupted.'
+            else:
+                print 'error: ' + str(e)
+                exit(1)
+    else: # encode
         imout = encode_file(im, args.infile)
  
         if args.outfile == '':
