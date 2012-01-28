@@ -22,6 +22,7 @@ import os, sys
 import locale
 import Image
 import hashlib
+import argparse
 
 # Script parameters
 VER_MAJOR, VER_MINOR = 0, 2
@@ -60,7 +61,7 @@ def decode_bytes(pixels, start, end):
 
     return data
 
-def decode_file(img):
+def decode_file(img, outfile=''):
     data = b''
     pixels = list(img.getdata())
 
@@ -113,7 +114,7 @@ def decode_file(img):
     print 'Filename:', filename
     print 'Size:', locale.format('%d', size, grouping=True), 'bytes'
     print 'md5sum:' if usemd5 else 'sha512sum:', m.hexdigest()
-    with open(filename, 'wb') as f:
+    with open(filename if outfile == '' else outfile, 'wb') as f:
         f.write(raw)
 
     print 'Decoding successful.'
@@ -192,70 +193,53 @@ def encode_file(img, filename):
 def main():
     locale.setlocale(locale.LC_ALL, '')
 
-    if len(sys.argv) < 3 or len(sys.argv) > 4:
-        print sys.argv[0] + ' ' + str(VER_MAJOR) + '.' + str(VER_MINOR) + \
-            ' Encodes/decodes data into/from image.'
-        print 'Copyright (C) 2011,2012 Shaun Ren'
-        print 'This program comes with ABSOLUTELY NO WARRANTY.'
-        print 'This is free software, and you are welcome to redistribute it'
-        print 'under certain conditions.'
-        print
-        print 'Usage: ' + sys.argv[0] + ' [imagein imageout inputfile | -d imagein]'
-        exit(1)
-
-    # We store 1 bit of data on every band of every pixel, and the B band of
-    # every 3 pixels is parity bit
-    decode = False
-    imagein = sys.argv[1]
-    imageout = ''
-    infile = ''
-
-    if imagein == '-d':
-        if len(sys.argv) != 3:
-            print 'Invalid arguments.'
-            exit(1)
-
-        decode = True
-        imagein = sys.argv[2]
-    else:
-        if len(sys.argv) != 4:
-            print 'Invalid arguments.'
-            exit(1)
-
-        imageout = sys.argv[2]
-        infile = sys.argv[3]
+    # argparse
+    parser = argparse.ArgumentParser(prog='datahider', 
+                 description='Encode/decode data in an image.')
+    parser.add_argument('--version', action='version', 
+                        version='%(prog)s {}.{}'.format(VER_MAJOR,VER_MINOR))
+    parser.add_argument('imagein', metavar='IMAGE', help='image file')
+    parser.add_argument('-o', '--output', metavar='OUTFILE', dest='outfile',
+                        help='output file', default='')
+    parser.add_argument('-v', '--verbose', action='store_true', help='verbose')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-d', '--decode', action='store_true',
+                       help='decode infile')
+    group.add_argument('-e', '--encode', metavar='INFILE', dest='infile',
+                       help='encode infile with image')
+    group.add_argument('-i', '--info', action='store_true',
+                       help='show image info')
+    args = parser.parse_args(sys.argv[1:])
 
     VALID_EXTS = {'.bmp', '.png', '.gif'}
-    ext = os.path.splitext(imagein)[1].lower()
-    if ext not in VALID_EXTS:
-        print 'Invaild picture file. A lossless image format is required.'
-        exit(1)
-    elif not isvalidfile(imagein):
-        print 'Image not valid.'
-        exit(1)
+    fn = os.path.splitext(args.imagein)
+    if fn[1].lower() not in VALID_EXTS:
+        parser.error('Invaild image file. A lossless image format is required.')
+    elif not isvalidfile(args.imagein):
+        parser.error('Image not found.')
 
-    if len(imageout) > 0:
-        ext = os.path.splitext(imageout)[1].lower()
-        if ext not in VALID_EXTS:
-            print 'Invalid output file. A lossless image format is required.'
-            exit(1)
-
-    if decode:
-        im = Image.open(imagein)
+    if not args.decode and len(args.outfile) > 0:
+        extout = os.path.splitext(args.outfile)[1].lower()
+        if extout not in VALID_EXTS:
+            parser.error('Invalid output file. A lossless image format is required.')
+            
+    if args.decode:
+        im = Image.open(args.imagein)
         if im.size[0] * im.size[1] < 228:
-            print 'Image size too small.'
-            exit(1)
+            parser.error('Image size too small.')
     
-        decode_file(im)
+        decode_file(im, args.outfile)
     else: # encode
-        im = Image.open(imagein)
+        im = Image.open(args.imagein)
         if im.size[0] * im.size[1] < 228:
-            print 'Image size too small.'
-            exit(1)
+            parser.error('Image size too small.')
 
-        imout = encode_file(im, infile)
-    
-        with open(imageout, 'wb') as f:
+        imout = encode_file(im, args.infile)
+ 
+        if args.outfile == '':
+            args.outfile = fn[0] + '.out' + fn[1]
+
+        with open(args.outfile, 'wb') as f:
             imout.save(f)
 
         print 'Encoding successful.'
